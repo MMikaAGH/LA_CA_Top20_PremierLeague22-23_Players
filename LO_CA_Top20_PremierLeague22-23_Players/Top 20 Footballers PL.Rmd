@@ -1,0 +1,423 @@
+---
+title: "Badanie formy piłkarzy Premier League w sezonie 2022/2023"
+author: "Marcin Mika"
+date: "2023-12-12"
+output:
+  html_document:
+    df_print: paged
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1.	Wstęp
+W projekcie zajmę się analizą formy 20 najlepszych piłkarzy w klasyfikacji kanadyjskiej (bramki plus asysty) rozgrywek „Premier League 2022/23”. Celem jest wybór zawodnika, który był w najlepszej formie w minionym sezonie i miał największy wpływ na dyspozycje swojej drużyny oraz pogrupowanie zawodników według ich dyspozycji.
+```{r}
+my_data <-read.csv('20 Best Footballers.csv', 
+                header=TRUE)
+
+my_data
+```
+# 2. Opis
+
+Jak już wspomniałem, wybrałem 20 obiektów którymi są zawodnicy Premier League z największą sumą asyst i bramek w sezonie 2022/2023. Wybrane przeze mnie zmienne to: <br>
+  •	Goals – liczba zdobytych bramek (stymulanta) <br>
+  •	Assists – bez ostatniego, kluczowego zagrania strzelenie bramki jest ciężkie (stymulanta) <br>
+  •	GI – ten wskaźnik dostarcza informacji na temat roli danego zawodnika w zdobywaniu bramek swojej drużyny (stymulanta):<br>
+                     <center>(Bramki + Asysty) / Bramki zespołu  </center><br>
+    Trossard zmienił klub w trakcie sezonu, więc jego wzór wygląda tak:<br>
+    <center>(Bramki dla zespołu A + Bramki dla zespołu B + Asysty dla zespołu A + Asysty dla zespołu B)<br>
+                                    /<br>
+    (Bramki zespołu A gdy Trossard był w kadrze zespołu A + Bramki zespołu B gdy                                                  Trossard był w kadrze zespołu B) </center><br>
+  •	xG – Goals - Różnica między przewidywaną liczbą bramek (xG) a liczbą strzelonych bramek (Golas), Model xG używa danych historycznych, aby określić, jakie szanse na zdobycie bramki są zwykle z danej pozycji na boisku. Im większą ma wartość, tym gorzej (zawodnik zmarnował więcej sytuacji niż powinien  (destymulanta)<br>
+  •	xA – Assists - Różnica między przewidywaną liczbą asyst (xA), która wynika z analizy statystycznej a  liczbą asyst (Assists). Model xA działa analogicznie do modelu xG, jednak w naszym badaniu      będzie stymulanta. Im większe xA tym więcej piłkarz wykreował dogodnych sytuacji strzeleckich (nie      jego wina, że partnerzy z drużyny je zmarnowali) - stymulanta.<br>
+  •	Sh90 – liczba strzałów na 90 min (stymulanta)<br>
+  •	KP90 – liczba kluczowych podań na 90 min, czyli takich, po których padł strzał (była możliwa asysta     - stymulanta)<br>
+  •	Min/Game – Średnia liczba rozegranych minut na mecz. Nie może być zbyt duża, ponieważ sezon    jest     długi i piłkarz może być przemęczony (oznacza złe zarządzanie drużyną) oraz nie powinna być zbyt        mała (oznacza, że zawodnik nie jest aż tak ważny dla zespołu). Przyjąłem, że idealna wartość     to     75 min (nominanta)<br>
+  <br>
+Wszystkie dane użyte w analizie pochodzą z serwisu [understat.com](https://understat.com). <br>
+
+# 3. Wstępna analiza danych
+•	Współczynniki zmienności:
+```{r}
+coefficient_of_variation<- function(x) {
+  cv <- sd(x) / abs(mean(x))
+  return(cv)
+}
+cvs <- sapply(my_data[,-1], coefficient_of_variation)
+cvs
+```
+<br>
+Wszędzie współczynnik zmienności jest większy od 10%, więc nie ma konieczności odrzucenia zmiennych do analizy skupień. Warto zauważyć, że w zmiennych „xG.minus.Goals” i „xA.minus.Assists” współczynnik jest bardzo duży – niektórzy zawodnicy mają skłonność do marnowania dogodnych sytuacji, a inni do wykorzystywania tych teoretycznie „trudniejszych”. Najmniejsza wartość jest w przypadku „Min.per.Game”, czego również można było się spodziewać.<br>
+•	Korelacja:
+```{r}
+library(corrplot)
+cor_matrix <- cor(my_data[,-1])
+corrplot(cor_matrix, method = "number")
+```
+<br>Wszędzie |corr |< 0.9, więc nie ma powodu do odrzucenia zmiennych do analizy skupień.<br>
+• Wykresy pudełkowe z wąsem i histogramy:
+```{r}
+boxplot(my_data[,2:3], outline = TRUE)
+summary(my_data$Goals)
+summary(my_data$Assists)
+```
+<br>
+Na obu wykresach mediana znajduje się mniej więcej w środku pudełka, co sugeruje, że wartość środkowa jest na środku zbioru. Wykres "Goals" sugeruje prawostronną asymetrie rozkładu (odl. Max od Me jest zdecydowanie większa niż Min od Me). Wykres "Assists" wzkazuje na bardziej symetryczny rozkład (lekka asymetria prawostronna).Wartości odstające w bramkach to 36 (Haaland) i 30 (Kane),  asystach 16 (De Bruyne)
+<br>
+```{r}
+par(mfrow= c(1,2))
+hist(my_data[,2], xlab = "Goals", ylab="Density",main=" ", freq=FALSE, breaks=nclass.FD(my_data[,2]), col = "white")
+lines(density(my_data[,2], kernel="gaussian"), col="red")
+hist(my_data[,3], xlab = "Assists", ylab="Density",main=" ", freq=FALSE, col = "white", breaks=nclass.FD(my_data[,3]))
+lines(density(my_data[,3], kernel="gaussian"), col="red")
+```
+<br>
+Histogram pokazuje, że bramki mają tendencję do skupiania się w przedziałach 5-10 oraz 10-15. 
+Asysty natomiast mają tendencję do skupiania się w przedziale 4-6. Rozkład asyst jest bardziej zbliżony do symetrycznego niż bramek.
+<br>
+```{r}
+boxplot(my_data[,4], outline = TRUE, xlab= "Goals involvment")
+summary(my_data$GI)
+
+```
+<br>W „GI” odległość mediany od Q3 jest większa niż od Q1, co sugeruje że wartość środkowa jest bardziej zbliżona do niższych wartości w danych. Wykres wskazuje asymetrie prawostronną (odl Max od Me większa niż Min od Me). Nie ma wartości odstających.
+```{r}
+hist(my_data[,4], xlab = "Goal Involvement", ylab="Density",main=" ", freq=FALSE, col = "white", breaks=nclass.FD(my_data[,4]), ylim=c(0,6))
+lines(density(my_data[,4], kernel="gaussian"), col="red")
+```
+<br>Histogram wskazuje, że współczynnik GI skupia się w przedziale 0,2-0,3. Wykres sugeruje prawostronną asymetrie.
+```{r}
+boxplot(my_data[,5:6], outline = TRUE)
+summary(my_data$xG.minus.Goals)
+summary(my_data$xA.minus.Assists)
+```
+<br>Na obu wykresach mediana znajduje się mniej więcej w środku pudełka – co sugeruje, że wartość środkowa jest na środku zbioru.Wykres "xG minus Goals" wskazuje na symetryczny rozkład. W obu przypadkach nie ma wartości odstających.
+```{r}
+par(mfrow= c(1,2))
+hist(my_data[,5], xlab = "xG minus Goals", ylab="Density", main=" ", freq=FALSE, col = "white", breaks=nclass.FD(my_data[,5]), ylim=c(0,0.1))
+lines(density(my_data[,5], kernel="gaussian"), col="red")
+hist(my_data[,6], xlab = "xA minus Assists", ylab="Density", main=" ", freq=FALSE, col = "white", breaks=nclass.FD(my_data[,6]), ylim=c(0,0.12))
+lines(density(my_data[,6], kernel="gaussian"), col="red")
+```
+<br>W „xG minus Goals” oraz „xA minus Assists” dane mają skłonność do skupiania się wokół 0  - było to do przewidzenia, ponieważ rzeczywista liczba bramek rzadko różni się wiele od tej obliczonej algorytmami (tak samo w przypadku asyst) 
+```{r}
+boxplot(my_data[,7:8], outline = TRUE)
+summary(my_data$Sh90)
+summary(my_data$KP90)
+```
+<br>W „Sh90” oraz „KP90” wykresy są podobnej długości, co oznacza, że dane są podobnie rozproszone. W obu przypadkach nie ma wartości odstających.
+```{r}
+par(mfrow= c(1,2))
+hist(my_data[,7], xlab = "Shots per 90", ylab="Density", main=" ", freq=FALSE, col = "white", breaks=nclass.FD(my_data[,7]))
+lines(density(my_data[,7], kernel="gaussian"), col="red")
+hist(my_data[,8], xlab = "Key passes per 90", ylab="Density", main=" ", freq=FALSE, col = "white",breaks=nclass.FD(my_data[,8]), ylim = c(0,0.5))
+lines(density(my_data[,8], kernel="gaussian"), col="red")
+```
+<br> Strzały na 90 min mają tendencje do skupiania się w przedziale 2-2,5, a w kluczowych podaniach na 90 min nie ma jednego przedziału z wielką przewagą nad innymi.W strzałach na 90 min wykres sugeruje asymetrie prawostronną rozkładu.
+```{r}
+boxplot(my_data[,9], outline = TRUE, xlab= "Min per Game")
+summary(my_data$Min.per.Game)
+```
+<br> W „Min per Game” mediana znajduje się mniej więcej w środku pudełka - wartość środkowa w środku zbioru. Odległość Min od Me jest zdecydowanie większa niż Max od Me co wskazuje na lewostronną asymetrie rozkładu. Są trzy wartości odstające: 57.41 (Foden), 61.65 (Wilson) i 62.86 (Trossard).
+<br>
+```{r}
+hist(my_data[,9], xlab = "Min per Game", ylab="Density", main=" ", freq=FALSE, col = "white", breaks=nclass.FD(my_data[,9]))
+lines(density(my_data[,9], kernel="gaussian"), col="red")
+```
+<br> Liczba minut na mecz ma skłonność do skupiania się w przedziale od 80 do 90 minut. Histogram wskazuje na asymetrie lewostronną.<br>
+
+# 4. Porządkowanie liniowe
+
+### Metoda Hellwiga (z wagami)
+1.    Zamiana destymulanty (xG – Goals) na stymulante (mnożę razy -1) oraz nominanty (Min per Game) na stymulante<br>
+```{r}
+my_data_copy <- data.frame(my_data)
+my_data_copy[,5] <- my_data_copy[,5]* (-1)
+my_data_copy[,9] <- ifelse(my_data_copy[,9] == 75,1,
+                    ifelse(my_data_copy[,9] < 75, -1/(my_data_copy[,9]-75-1),1/(my_data_copy[,9]-75+1)))
+my_data_copy
+```
+2.    Następnie standaryzuje dane według wzoru:
+```{r}
+my_data_stand <- data.frame(scale(my_data_copy[,2:9]))
+my_data_stand
+```
+3.    Tworze „wzorzec” – wybieram maximum z każdej kolumny:
+```{r}
+pattern <- apply(my_data_stand,2,max)
+pattern
+```
+4.    Obliczam odległości obiektów od wzorca – z uwzględnieniem wag: <br>
+•	Goals – 0,12 <br>
+•	Assists – 0,12 <br>
+•	GI – 0,2 – uważam, że ta zmienna jest najważniejsza w moim badaniu, ponieważ określa jak ważny dla drużyny był dany zawodnik <br>
+•	xG – Goals – 0,15<br>
+•	xA – Assists – 0,15<br>
+•	Sh90 – 0,1<br>
+•	KP90 – 0,1<br>
+•	Min per Game – 0,01 - uważam, że ilość rozegranych minut na mecz jest najmniej ważna z użytych przeze mnie zmiennych<br>
+Można zauważyć, że przyjąłem, że zmienne „policzone przez algorytm” czyli np. xG – Goals mają większą wagę od tych „z boiska” np. Goals. Uważam, że są one ważniejsze, ponieważ lepiej odzwierciedlają formę zawodników i w pewnym stopniu usuwają boiskową losowość.<br>
+Powstałe odległości:
+```{r}
+wages <- c(0.12,0.12,0.2,0.15,0.15,0.1,0.15,0.01)
+distances <- apply(my_data_stand, 1,  function(row) {sqrt(sum(wages*(row-pattern)^2))})
+distances
+```
+Obliczam odległość możliwie jak najwieksza:
+```{r}
+max_dist <- mean(distances) + 2*sd(distances)
+max_dist 
+```
+Ostateczne współczynniki:
+```{r}
+hellwig <- c(1- distances/max_dist)
+hellwig
+result<- data.frame(my_data[,1], hellwig)
+names(result) <- c("name","hellwig")
+result[order(result$hellwig, decreasing = TRUE), ]
+```
+Interpretacja: <br>
+Według mojego badania piłkarz, który miał największy wpływ na grę swojego zespołu i był w najlepszej formie w minionym sezonie Premier League to Harry Kane. Następne miejsca na podium zajęli odpowiednio Erling Haaland i Martin Odegaard.<br> 
+
+Warto zauważyć, że różnice między zawodnikami są bardzo niewielkie: zajmującego 4 miejsce Kevina De Bruyne i będącego na 10 pozycji Bukayo Sake różni tylko 0.04805043. <br>
+
+Numery po lewej stronie wskazują na pozycje piłkarza w klasyfikacji kanadyjskiej (bramki + asysty). Można zauważyć, że żadna pozycja w tym porządkowaniu liniowym nie pokrywa się z klasyfikacją kanadyjską.<br>
+
+Grupowanie wg średniej:
+```{r}
+gr1 <- result[result$hellwig>= mean(result$hellwig) + sd(result$hellwig),]
+gr2 <- result[mean(result$hellwig) <= result$hellwig 
+              & result$hellwig < mean(result$hellwig) + sd(result$hellwig),]
+gr3 <- result[mean(result$hellwig) - sd(result$hellwig) <= result$hellwig 
+              & result$hellwig < mean(result$hellwig),]
+gr4 <- result[result$hellwig<mean(result$hellwig) - sd(result$hellwig),]
+```
+Grupa 1: r >= mean(x) + sd(x)<br>
+W grupie o najwyższym poziomie (najlepsza forma i największy wpływ na drużynę) znalazły się obiekty:
+```{r}
+gr1[order(gr1$hellwig, decreasing = TRUE), ]
+
+```
+W tej grupie znalazło się dwóch zawodników, którzy mieli największy GI oraz byli najlepszymi strzelcami ligi
+<br>
+Grupa 2: mean(x) <= r < mean(x) + sd(x)<br>
+W grupie o ponadprzeciętnym poziomie znalazły się obiekty:
+```{r}
+gr2[order(gr2$hellwig, decreasing = TRUE), ]
+```
+W tej grupie przeważaja "kreatorzy", czyli piłkarze z największą liczbą KP90 - ilość kluczowych podań na 90 min (Saka, De Bruyne, Odegaard, Maddison i Bruno są w czołówce tej statystyki - top 7)
+```{r}
+edit <- data.frame(my_data$Names, my_data$KP90)
+head(edit[order(edit$my_data.KP90, decreasing = TRUE),], 7)
+
+```
+Grupa 3: mean(x) - sd(x) < r < mean(x) <br>
+W grupie o poziomie poniżej przeciętnego znalazły się obiekty:
+```{r}
+gr3[order(gr3$hellwig, decreasing = TRUE), ]
+```
+
+Grupa 4: r < mean(x) – sd(x) <br>
+W grupie o najniższym poziomie (najgorsza forma z najlepszych 20 piłkarzy i najmniejszy wpływ na drużynę)  znalazły się obiekty:
+```{r}
+gr4[order(gr4$hellwig, decreasing = TRUE), ]
+```
+Jesus jest piłkarzem z największym xG minus Goals (czyli zmarnował najwięcej dognych sytuacji) oraz drugim od końca w GI (najmniejszy udział w bramkach zespołu)
+
+### Metoda TOPSIS (z wagami)
+1.	Zamiana danych na stymulanty – używam data.frame z poprzedniego porządkowania
+```{r}
+my_data_copy
+```
+2.  Standaryzacja danych  - używam data.frame z poprzedniego porządkowania
+```{r}
+my_data_stand
+```
+3. Korzystam z najlepszego wzorca stworzonego wcześniej i tworzę „najgorszy” obiekt
+```{r}
+pattern
+the_worst_pattern <- apply(my_data_stand,2,min)
+the_worst_pattern
+```
+4. Korzystam z wcześniej policzonych odległości obiektów od wzorca i obliczam je od antywzorca (używam również ustalonych wcześniej wag):<br>
+•	Goals – 0,12 <br>
+•	Assists – 0,12 <br>
+•	GI – 0,2 – uważam, że ta zmienna jest najważniejsza w moim badaniu, ponieważ określa jak ważny dla drużyny był dany zawodnik <br>
+•	xG – Goals – 0,15<br>
+•	xA – Assists – 0,15<br>
+•	Sh90 – 0,1<br>
+•	KP90 – 0,1<br>
+•	Min per Game – 0,01 - uważam, że ilość rozegranych minut na mecz jest najmniej ważna z użytych przeze mnie zmiennych<br>
+Można zauważyć, że przyjąłem, że zmienne „policzone przez algorytm” czyli np. xG – Goals mają większą wagę od tych „z boiska” np. Goals. Uważam, że są one ważniejsze, ponieważ lepiej odzwierciedlają formę zawodników i w pewnym stopniu usuwają boiskową losowość.<br>
+Tak prezentują się odległości:<br>
+
+```{r}
+distances
+distances2 <-apply(my_data_stand,1,function(row) {sqrt(sum(wages*(row - the_worst_pattern)^2))})
+distances2
+```
+5. Wyznaczam wartości miary dla każdego obiektu 
+```{r}
+topsis <- distances2/(distances + distances2)
+result2<- data.frame(my_data[,1], topsis)
+names(result2) <- c("name","topsis")
+result2[order(result2$topsis, decreasing = TRUE), ]
+```
+Interpretacja: <br>
+Według badania piłkarz, który miał największy wpływ na grę swojego zespołu i był w najlepszej formie w minionym sezonie Premier League to Harry Kane. Następne miejsca na podium zajęli odpowiednio Erling Haaland i Kevin De Bruyne. <br>
+
+Numery po lewej stronie wskazują na pozycje piłkarza w klasyfikacji kanadyjskiej (bramki + asysty). Można zauważyć, że tylko pozycja Sona (nr 18) jest taka sama jak w tej klasyfikacji.<br>
+<br>
+
+Grupowanie wyników:<br>
+Grupa 1: r >= mean(x) + sd(x)<br>
+W grupie o najwyższym poziomie (najlepsza forma i największy wpływ na drużynę) znalazły się obiekty:
+```{r}
+gr1_t <- result2[result2$topsis>= mean(result2$topsis) + sd(result2$topsis),]
+gr1_t[order(gr1_t$topsis, decreasing = TRUE), ]
+```
+
+
+Grupa 2: mean(x) <= r < mean(x) + sd(x)<br>
+W grupie o ponadprzeciętnym poziomie znalazły się obiekty:
+```{r}
+gr2_t <- result2[mean(result2$topsis) <= result2$topsis 
+              & result2$topsis < mean(result2$topsis) + sd(result2$topsis),]
+gr2_t[order(gr2_t$topsis, decreasing = TRUE), ]
+```
+Grupa 3: mean(x) - sd(x) < r < mean(x) <br>
+W grupie o poziomie poniżej przeciętnego znalazły się obiekty:
+```{r}
+gr3_t <- result2[mean(result2$topsis) - sd(result2$topsis) <= result2$topsis
+              & result2$topsis < mean(result2$topsis), ]
+gr3_t[order(gr3_t$topsis, decreasing = TRUE), ]
+```
+Grupa 4: r < mean(x) – sd(x) <br>
+W grupie o najniższym poziomie (najgorsza forma z najlepszych 20 piłkarzy i najmniejszy wpływ na drużynę)  znalazły się obiekty:
+```{r}
+gr4_t <- result2[result2$topsis<mean(result2$topsis) - sd(result2$topsis),]
+gr4_t[order(gr4_t$topsis, decreasing = TRUE), ]
+```
+## Porównanie wyników
+```{r}
+my_data_compared = data.frame(result, topsis)
+my_data_compared <- data.frame(result[,1],21-rank(my_data_compared$hellwig), 21 - rank(my_data_compared$topsis))
+names(my_data_compared) <- c("name", "hellwig", "topsis") 
+my_data_compared[order(my_data_compared$hellwig), ]
+```
+Porównując dwie metody porządkowania liniowego można zauważyć, że wyniki są zbliżone (np. 4 najlepszych piłkarzy według porządkowania liniowego metodą Hellwiga jest w top 5 zawodników w metodzie TOPSIS)
+
+# 5. Analiza skupień
+
+### Grupowanie podziałowe: Metoda k-średnich 
+1. Standaryzacja danych
+```{r}
+my_data_stand2<-data.frame(scale(my_data[,2:9]))
+my_data_stand2
+```
+2. Wartości odstające - stosuje metodę trzech sigm (obiekt jest outlierem, 
+jeśli choć jedna jego zmienna przyjmuje wartość na moduł większą od 3 
+statystyczna analiza danych)
+```{r}
+sigm_3 <- data.frame(apply(my_data_stand2, MARGIN = c(1, 2), FUN = function(x) abs(x) > 3))
+sigm_3
+```
+Wszędzie jest wartość "FALSE", więc nie ma wartości |x| > 3 - według tej (średniej, a nawet słabej)
+metody w moich danych nie ma oulierów. <br>
+3. Wykonaję grupowanie k-średnich na macierzy danych:
+- sprawdzam ile grup powinienem użyc <br>
+Potrzebne biblioteki::
+```{r}
+library(psych)
+library(factoextra)
+```
+Indeks sylwetkowy:
+```{r}
+fviz_nbclust(my_data_stand2, kmeans, method= "silhouette")
+```
+
+<br>Dla każdego punktu danych obliczana jest wartość silhouette, która mierzy, jak dobrze ten punkt pasuje do swojego klastra w porównaniu z sąsiednimi klastrami. Im wyższa wartość tym lepiej, więc wybieramy ilość grup, dla ktorej ta wartość jest największa.<br>
+W tym przypadku to 2 <br>
+Suma Kwadratów Odległości Wewnątrz Klastrów <br> 
+```{r}
+fviz_nbclust(my_data_stand2, kmeans, method= "wss")
+```
+
+Szukam momentu, w którym spadek WSS zwalnia i zaczyna przypominać łokieć. W tym przypadku jest to przejście z 3 do 4, więc najbardziej optymalna liczba grup wg metody WSS to 3. <br>
+Statystyka Odstępu:
+```{r}
+fviz_nbclust(my_data_stand2, kmeans, method= "gap_stat")
+```
+<br>Porównuje sumę kwadratów odległości między punktami w klastrze z oczekiwanym wynikiem. Im wyższa wartość, tym lepsze klastry. W tym przypadku osiąga maximum dla 2.<br>
+
+Podsumowanie:<br>
+2 z 3 indeksów zasugerowały, że powinienem przeprowadzić analize skupień dla dwóch grup. <br>
+Używam metodę k-średnich z podziałem na 2 klastry oraz ustawiam nstart na 10000 - tyle razy ma wykonać się algorytm (liczba "losowych" startów)
+```{r}
+kmeans_fun <-kmeans(my_data_stand2,2, 10000)
+cluster <-fviz_cluster(kmeans_fun, my_data[,2:9])
+cluster
+```
+```{r}
+wynik <- describeBy(my_data[,2:9], group = kmeans_fun$cluster)
+wynik
+```
+Grupa 1 Kreatorzy, asystenci <br>
+Grupa 2 Najlepsi strzelcy i zawodnicy z największym wpływem na gre swojej drużyny <br>
+W grupie 1 mamy zawodników z większą ilością kluczowych podań na mecz oraz asyst. Mają oni średnio 2,2 kluczowego podania na 90 min, podczas gdy piłkarze 2 grupy mają średnio 0,96 KP na 90 min. Średnia ilość asyst w grupie 1 to 8,5 a w grupie 2 to 5,5 co potwierdza, że w klastrze nr 1 przeważają zawodnicy kreujący grę i stwarzający wiecej sytuacji. <br> 
+Natomiast w grupie 2 są zawodnicy bardziej bramkostrzelni (minimum Goals w gr2 wynosi prawie tyle co maksimum w gr1 oraz średnia ilość bramek jest 2 razy większa) i mający większy wpływ na drużyne (średni GI wynosi 0,4 a w gr 1 tylko 0,25 - zawodnicy z drugiej grupy "odpowiadają" za średnio 40% bramek swojej drużyny, podczas gdy piłkarze gr 1 biorą udział średnio w 25% goli zespołu). Średnia liczba oddawanych strzałów na 90 min jest większa o 1,16 w grupie 2.
+
+### Grupowanie hierarchiczne: Metoda Warda
+
+Potrzebna biblioteka:
+```{r}
+library(clusterSim)
+```
+
+Obliczam odleglosci miedzy obiektami - metoda euklidesowa
+```{r}
+data_distances <- dist(my_data_stand2, method = "euclidean")
+```
+Wybieram metode klasyfikacji - metoda Warda: <br>
+Metoda bazuje na ANOVA. Na każdym etapie minimalizuje ona wzrost łącznej sumy kwadratów odchyleń wszystkich cech dla każdego
+obiektu w obrębie grupy od średnich w skupieniu
+```{r}
+data_groups <- hclust(data_distances, method ="ward.D")
+data_groups
+```
+Tworzę dendogram:
+```{r}
+dendogram <-plot(data_groups, labels = my_data[,1], xlab="Footballers", hang = -1)
+```
+
+Sprawdzam za pomocą indeksu - index Silhouette - która liczba grup jest bardziej optymalna (2 czy 4)
+```{r}
+index.S(data_distances, cutree(data_groups, k=2))
+index.S(data_distances, cutree(data_groups, k=4))
+```
+Indeks wskazał, że podział na dwie grupy jest bardziej optymalny<br>
+Sprawdzam za pomocą indeksu - index Bakera i Huberta - która liczba grup jest bardziej optymalna (2 czy 4)
+```{r}
+index.G2(data_distances, cutree(data_groups, k=2))
+index.G2(data_distances, cutree(data_groups, k=4))
+```
+Indeks wskazał, że podział na cztery grupy jest bardziej optymalny. Zdecyduje się "posłuchać" indeksu sylwetkowego, ponieważ jest on częsciej używany w rzeczywistości (przy podziale na 4 grupy jedna składałaby się tylko z 2 obiektów)
+wyniki:
+```{r}
+g1_a <- data.frame(my_data[c(1,2,6,14,20,3,5,8,10),])
+g2_a <- data.frame(my_data[c(4,7,9,11,12,13,15,16,17,18,19), ])
+g1_a
+summary(g1_a[,2:9])
+```
+Grupa 1: Najlepsi strzelcy, głównie napastnicy
+```{r}
+g2_a
+summary(g2_a[,2:9])
+```
+Grupa 2: Asystenci i kreatorzy - pomocnicy, rozgrywający  <br>
+W grupie pierwszej średnia bramek jest dwa razy większa od tej w grupie 2 oraz średnia liczba strzałów na 90 min wynosi 3,54 a w grupie drugiej 2,34 - co potwierdza, że grupa pierwsza to najlepsi strzelcy ligi. <br>
+W klastrze drugim średnia kluczowych podań na 90 min  wynosi 2,28 a w pierwszym tylko jedno takie zagranie oraz średnia liczba asyst to 8,73 (w grupie pierwszej - 5,56) - co potwierdza, że druga grupa to rozgrywający i głównie pomocnicy.<br>
+Warto dodać, że patrząc na same nazwiska w poszczególnych grupach można dojść do podobnych wniosków.
